@@ -1,8 +1,10 @@
-transcribe_config.json
+﻿# 設定ファイル（HFトークン含む）
+_app/transcribe_config.json
+
+# 出力フォルダ
 文字起こし/
-__pycache__/
-*.pyc
-*.pyo
+
+# 動画・音声ファイル
 *.mp4
 *.mov
 *.mkv
@@ -11,3 +13,11 @@ __pycache__/
 *.mp3
 *.wav
 *.m4a
+
+# Python キャッシュ
+__pycache__/
+*.pyc
+*.pyo
+
+# ZIP
+*.zip

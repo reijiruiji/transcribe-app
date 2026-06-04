@@ -1,5 +1,5 @@
 """
-文字起こしアプリ v2 — WhisperX + pyannote.audio
+文字起こしアプリ v2.1 — WhisperX + pyannote.audio
 完全ローカル処理・話者分離・GPU対応
 """
 
@@ -15,9 +15,9 @@ from pathlib import Path
 from datetime import datetime
 
 CONFIG_FILE = Path(__file__).parent / "transcribe_config.json"
-OUTPUT_DIR  = Path(__file__).parent / "文字起こし"
+OUTPUT_DIR  = Path(__file__).parent.parent / "文字起こし"
 
-APP_VERSION = "v2.0"
+APP_VERSION = "v2.1"
 
 # ===== 設定 =====
 def load_config():
@@ -43,7 +43,6 @@ def detect_gpu():
         return False, None, "未インストール"
 
 def resolve_device(preferred: str):
-    """preferred: 'auto'|'cuda'|'cpu' → actual device string"""
     has_cuda, _, _ = detect_gpu()
     if preferred == "auto":
         return "cuda" if has_cuda else "cpu"
@@ -54,12 +53,13 @@ def resolve_device(preferred: str):
 # ===== 文字起こし処理 =====
 def run_transcription(input_file, output_dir, hf_token, model_size, device_pref, log_q):
 
-    def log(msg):   log_q.put(("log", msg))
-    def done(p):    log_q.put(("done", p))
-    def error(msg): log_q.put(("error", msg))
+    def log(msg):    log_q.put(("log", msg))
+    def done(path):  log_q.put(("done", path))
+    def error(msg):  log_q.put(("error", msg))
 
     try:
         import whisperx
+        import whisperx.diarize
 
         device = resolve_device(device_pref)
         compute_type = "float16" if device == "cuda" else "int8"
@@ -67,7 +67,8 @@ def run_transcription(input_file, output_dir, hf_token, model_size, device_pref,
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        device_disp = "GPU (RTX 4060 Ti)" if device == "cuda" else "CPU（GPUより遅い）"
+        has_cuda, gpu_name, _ = detect_gpu()
+        device_disp = f"GPU ({gpu_name})" if device == "cuda" else "CPU（GPUより遅い）"
         log(f"  ファイル : {Path(input_file).name}")
         log(f"  処理方式 : {device_disp}")
         log(f"  モデル   : {model_size}")
@@ -92,7 +93,7 @@ def run_transcription(input_file, output_dir, hf_token, model_size, device_pref,
         log("       完了")
 
         log("【4/4】 発言者を分析中...")
-        diarize = whisperx.DiarizationPipeline(use_auth_token=hf_token, device=device)
+        diarize = whisperx.diarize.DiarizationPipeline(token=hf_token, device=device)
         diarize_segments = diarize(audio)
         result = whisperx.assign_word_speakers(diarize_segments, result)
         log("       完了")
@@ -103,7 +104,7 @@ def run_transcription(input_file, output_dir, hf_token, model_size, device_pref,
         out_json = Path(output_dir) / f"{stem}_{ts}.json"
 
         def fmt(sec):
-            h, m = int(sec//3600), int((sec%3600)//60)
+            h, m = int(sec // 3600), int((sec % 3600) // 60)
             s = sec % 60
             return f"{h:02d}:{m:02d}:{s:05.2f}" if h else f"{m:02d}:{s:05.2f}"
 
@@ -116,7 +117,8 @@ def run_transcription(input_file, output_dir, hf_token, model_size, device_pref,
             for seg in result["segments"]:
                 spk  = seg.get("speaker", "発言者??")
                 text = seg["text"].strip()
-                if not text: continue
+                if not text:
+                    continue
                 if spk != cur:
                     f.write(f"\n【{spk}】\n"); cur = spk
                 f.write(f"  {fmt(seg['start'])} - {fmt(seg['end'])}  {text}\n")
@@ -130,9 +132,10 @@ def run_transcription(input_file, output_dir, hf_token, model_size, device_pref,
         done(str(out_txt))
 
     except ImportError as e:
-        error(f"ライブラリが見つかりません: {e}\n\n「セットアップ.bat」を先に実行してください。")
+        error(f"ライブラリが見つかりません: {e}\n\nセットアップ.bat を先に実行してください。")
     except Exception as e:
-        error(str(e))
+        import traceback
+        error(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
 
 # ===== HF トークン取得ガイドのポップアップ =====
@@ -143,17 +146,12 @@ def show_token_guide(parent):
     win.resizable(False, False)
     win.grab_set()
 
-    BG = "#1a1a2e"
-    BG2 = "#16213e"
-    FG = "#e0e0e0"
-    ACCENT = "#4fc3f7"
-    GREEN = "#69f0ae"
+    BG, BG2 = "#1a1a2e", "#16213e"
+    FG, ACCENT = "#e0e0e0", "#4fc3f7"
     YELLOW = "#ffd54f"
 
-    pad = {"padx": 20, "pady": 6}
-
     tk.Label(win, text="HuggingFace トークンの取得手順",
-             bg=BG, fg=ACCENT, font=("Yu Gothic UI", 13, "bold")).pack(**pad, pady=(16, 4))
+             bg=BG, fg=ACCENT, font=("Yu Gothic UI", 13, "bold")).pack(padx=20, pady=(16, 4))
 
     steps = [
         ("STEP 1", "下のボタンから HuggingFace にアクセス\n（無料アカウントが必要です）"),
@@ -193,19 +191,16 @@ def show_token_guide(parent):
 # ===== GPU 有効化ガイドのポップアップ =====
 def show_gpu_guide(parent):
     win = tk.Toplevel(parent)
-    win.title("GPU（RTX 4060 Ti）を有効にする")
+    win.title("GPU を有効にする")
     win.configure(bg="#1a1a2e")
     win.resizable(False, False)
     win.grab_set()
 
-    BG = "#1a1a2e"
-    BG2 = "#16213e"
-    FG = "#e0e0e0"
-    ACCENT = "#4fc3f7"
-    GREEN = "#69f0ae"
-    YELLOW = "#ffd54f"
+    BG, BG2 = "#1a1a2e", "#16213e"
+    FG, ACCENT = "#e0e0e0", "#4fc3f7"
+    GREEN, YELLOW = "#69f0ae", "#ffd54f"
 
-    tk.Label(win, text="GPU（RTX 4060 Ti）を有効にする",
+    tk.Label(win, text="GPU を有効にする（CUDA版PyTorchのインストール）",
              bg=BG, fg=ACCENT, font=("Yu Gothic UI", 13, "bold")).pack(padx=20, pady=(16, 4))
 
     tk.Label(win, text="現在CPU版のPyTorchが入っています。\n以下のコマンドを実行するとGPUが使えるようになります。",
@@ -231,16 +226,14 @@ def show_gpu_guide(parent):
                          command=copy_cmd)
     copy_btn.pack(pady=(4, 0))
 
-    steps = tk.Frame(win, bg=BG2)
-    steps.pack(fill="x", padx=20, pady=10)
-    tk.Label(steps,
+    tk.Label(win,
              text="手順：\n"
                   "① 今の文字起こしが終わるまで待つ\n"
                   "② スタートメニュー → 「コマンドプロンプト」を開く\n"
                   "③ 上のコマンドを貼り付けてEnter（約3GB、10〜20分）\n"
                   "④ 完了後にアプリを再起動すると自動でGPUが選ばれます",
              bg=BG2, fg=FG, font=("Yu Gothic UI", 9),
-             justify="left", padx=14, pady=10).pack(anchor="w")
+             justify="left", padx=14, pady=10).pack(fill="x", padx=20, pady=10)
 
     tk.Label(win, text="GPU使用時: 処理速度が約5〜10倍速くなります",
              bg=BG, fg=YELLOW, font=("Yu Gothic UI", 9, "bold")).pack(pady=(0, 4))
@@ -286,7 +279,6 @@ class App(tk.Tk):
         self.after(100, self._poll)
 
     def _build(self):
-        # ヘッダー
         hdr = tk.Frame(self, bg=BG3, pady=10)
         hdr.pack(fill="x")
         tk.Label(hdr, text="文字起こしアプリ", bg=BG3, fg=ACCENT,
@@ -349,7 +341,6 @@ class App(tk.Tk):
         s3 = StepCard(wrap, 3, "処理方式を選んで開始")
         s3.pack(fill="x", pady=(0, 8))
 
-        # GPU/CPU 選択
         device_row = tk.Frame(s3.body, bg=BG2)
         device_row.pack(fill="x", pady=(0, 8))
 
@@ -371,12 +362,10 @@ class App(tk.Tk):
                   font=("Yu Gothic UI", 9), cursor="hand2", padx=8, pady=3,
                   command=lambda: show_gpu_guide(self)).pack(side="right")
 
-        # 処理時間目安
         self.time_label = tk.Label(s3.body, text="",
                                    bg=BG2, fg=FG_DIM, font=("Yu Gothic UI", 9))
         self.time_label.pack(anchor="w", pady=(0, 8))
 
-        # 開始ボタン
         self.start_btn = tk.Button(s3.body, text="▶  文字起こし開始",
                                    bg=GREEN, fg=BG, font=("Yu Gothic UI", 12, "bold"),
                                    relief="flat", padx=20, pady=8, cursor="hand2",
@@ -386,15 +375,13 @@ class App(tk.Tk):
         self.progress = ttk.Progressbar(s3.body, mode="indeterminate", length=490)
         self.progress.pack(fill="x", pady=(10, 0))
 
-        # ログ
         tk.Label(wrap, text="処理ログ", bg=BG, fg=FG_DIM,
                  font=("Yu Gothic UI", 9)).pack(anchor="w", pady=(8, 2))
-        self.log_text = tk.Text(wrap, height=10, bg="#0d1117", fg=GREEN,
+        self.log_text = tk.Text(wrap, height=12, bg="#0d1117", fg=GREEN,
                                 font=("Consolas", 9), relief="flat",
                                 state="disabled", wrap="word", width=62)
         self.log_text.pack(fill="x")
 
-        # フッター
         foot = tk.Frame(wrap, bg=BG)
         foot.pack(fill="x", pady=(8, 0))
         tk.Label(foot, text=f"文字起こしアプリ {APP_VERSION}  |  完全ローカル処理",
@@ -404,9 +391,8 @@ class App(tk.Tk):
                   relief="flat", cursor="hand2",
                   command=self._open_folder).pack(side="right")
 
-    # ---- ヘルパー ----
     def _refresh_status(self):
-        has_cuda, gpu_name, tv = detect_gpu()
+        has_cuda, gpu_name, _ = detect_gpu()
         if has_cuda:
             self.gpu_badge.config(
                 text=f"✓ {gpu_name}  使用可能",
@@ -448,24 +434,31 @@ class App(tk.Tk):
                 if kind == "log":
                     self._log(val)
                 elif kind == "done":
-                    self.progress.stop()
-                    self.start_btn.config(state="normal", bg=GREEN)
-                    self._busy = False
-                    self.cfg["hf_token"] = self.token_var.get()
-                    self.cfg["device"]   = self.device_var.get()
-                    save_config(self.cfg)
-                    messagebox.showinfo("完了！",
-                        "文字起こしが完了しました！\n\n"
-                        "「保存フォルダを開く」ボタンで結果を確認できます。")
+                    self._on_done(val)
                 elif kind == "error":
-                    self.progress.stop()
-                    self.start_btn.config(state="normal", bg=GREEN)
-                    self._busy = False
-                    self._log(f"❌ エラー: {val}")
-                    messagebox.showerror("エラーが発生しました", val)
-        except Exception:
+                    self._on_error(val)
+        except queue.Empty:
             pass
         self.after(100, self._poll)
+
+    def _on_done(self, path):
+        self.progress.stop()
+        self.start_btn.config(state="normal", bg=GREEN)
+        self._busy = False
+        self.cfg["hf_token"] = self.token_var.get()
+        self.cfg["device"]   = self.device_var.get()
+        save_config(self.cfg)
+        messagebox.showinfo("完了！",
+            "文字起こしが完了しました！\n\n"
+            "「保存フォルダを開く」ボタンで結果を確認できます。")
+
+    def _on_error(self, msg):
+        self.progress.stop()
+        self.start_btn.config(state="normal", bg=GREEN)
+        self._busy = False
+        self._log(f"\n❌ エラー:\n{msg}")
+        short = msg.split("\n")[0]
+        messagebox.showerror("エラーが発生しました", f"{short}\n\n詳細はログを確認してください。")
 
     def _start(self):
         if self._busy:
