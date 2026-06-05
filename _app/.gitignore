@@ -1,0 +1,13 @@
+transcribe_config.json
+文字起こし/
+__pycache__/
+*.pyc
+*.pyo
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.vrew
+*.mp3
+*.wav
+*.m4a
