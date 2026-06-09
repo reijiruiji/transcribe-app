@@ -132,10 +132,79 @@ def run_transcription(input_file, output_dir, hf_token, model_size, device_pref,
         done(str(out_txt))
 
     except ImportError as e:
-        error(f"ライブラリが見つかりません: {e}\n\nセットアップ.bat を先に実行してください。")
+        error(
+            "【セットアップ未完了】必要なライブラリがインストールされていません。\n\n"
+            "解決方法：\n"
+            "① このアプリを閉じる\n"
+            "② フォルダ内の「★セットアップ（初回だけここをダブルクリック）.bat」を\n"
+            "   ダブルクリックする\n"
+            "③ 黒い画面が閉じたらこのアプリを再起動する\n\n"
+            f"（技術詳細: {e}）"
+        )
     except Exception as e:
         import traceback
-        error(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
+        tb = traceback.format_exc()
+        msg = _friendly_error(type(e).__name__, str(e), tb)
+        error(msg)
+
+
+# ===== エラーメッセージの日本語化 =====
+def _friendly_error(etype: str, msg: str, tb: str) -> str:
+    msg_lower = msg.lower()
+    if "401" in msg or "unauthorized" in msg_lower or "token" in msg_lower and "invalid" in msg_lower:
+        return (
+            "【トークンエラー】HuggingFaceトークンが無効です。\n\n"
+            "解決方法：\n"
+            "① STEP 1のトークンを確認してください\n"
+            "② hf_ で始まる文字列になっているか確認\n"
+            "③ HuggingFaceで新しいトークンを発行して貼り直す\n\n"
+            f"（技術詳細: {etype}: {msg}）"
+        )
+    if "403" in msg or "gated" in msg_lower or "access" in msg_lower and "denied" in msg_lower:
+        return (
+            "【モデルアクセス拒否】HuggingFaceのモデル利用規約への同意が必要です。\n\n"
+            "解決方法：\n"
+            "ブラウザで以下の2つのページを開いて「Agree」を押してください：\n"
+            "① https://huggingface.co/pyannote/speaker-diarization-3.1\n"
+            "② https://huggingface.co/pyannote/segmentation-3.0\n\n"
+            f"（技術詳細: {etype}: {msg}）"
+        )
+    if "cuda" in msg_lower and ("out of memory" in msg_lower or "oom" in msg_lower):
+        return (
+            "【GPUメモリ不足】GPUのメモリ（VRAM）が足りません。\n\n"
+            "解決方法：\n"
+            "① 処理方式を「CPU」に変更して再試行\n"
+            "② 他のアプリを閉じてからGPUで再試行\n\n"
+            f"（技術詳細: {etype}: {msg}）"
+        )
+    if "filenotfounderror" in etype.lower() or "no such file" in msg_lower:
+        return (
+            "【ファイルが見つかりません】選択したファイルのパスが無効です。\n\n"
+            "解決方法：\n"
+            "「ファイルを選ぶ」ボタンでファイルを選び直してください。\n\n"
+            f"（技術詳細: {etype}: {msg}）"
+        )
+    if "ffmpeg" in msg_lower:
+        return (
+            "【FFmpegが見つかりません】動画変換に必要なFFmpegがインストールされていません。\n\n"
+            "解決方法：\n"
+            "「★セットアップ.bat」を再実行してFFmpegをインストールしてください。\n\n"
+            f"（技術詳細: {etype}: {msg}）"
+        )
+    return f"予期しないエラーが発生しました。\n\n{etype}: {msg}\n\n{tb}"
+
+
+# ===== セットアップ確認 =====
+def check_setup() -> tuple[bool, str]:
+    """whisperxがインストール済みかチェック。(ok, message)を返す"""
+    try:
+        import whisperx  # noqa: F401
+        return True, ""
+    except ImportError:
+        return False, (
+            "whisperxがインストールされていません。\n"
+            "「★セットアップ（初回だけここをダブルクリック）.bat」を実行してください。"
+        )
 
 
 # ===== HF トークン取得ガイドのポップアップ =====
@@ -276,6 +345,7 @@ class App(tk.Tk):
 
         self._build()
         self._refresh_status()
+        self._check_setup_banner()
         self.after(100, self._poll)
 
     def _build(self):
@@ -390,6 +460,19 @@ class App(tk.Tk):
                   bg=BG2, fg=FG_DIM, font=("Yu Gothic UI", 9),
                   relief="flat", cursor="hand2",
                   command=self._open_folder).pack(side="right")
+
+    def _check_setup_banner(self):
+        ok, msg = check_setup()
+        if not ok:
+            banner = tk.Frame(self, bg="#3a1a0e", pady=6)
+            banner.pack(fill="x", before=self.nametowidget(self.winfo_children()[1]))
+            tk.Label(
+                banner,
+                text="⚠  セットアップ未完了  — フォルダ内の「★セットアップ.bat」をダブルクリックしてください",
+                bg="#3a1a0e", fg="#ffd54f",
+                font=("Yu Gothic UI", 9, "bold"),
+                padx=12, pady=0
+            ).pack(side="left")
 
     def _refresh_status(self):
         has_cuda, gpu_name, _ = detect_gpu()
